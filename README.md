@@ -40,7 +40,7 @@ Then restart Claude Code and Codex, because agents load MCP servers only at star
 | Both | Creates your settings file, if it doesn't exist | `~/.config/herdr-app/agentbus.json` |
 | This folder | Removes `.mcp.json` and `.codex/config.toml` if `npm run setup` wrote them and you haven't edited them | This folder |
 
-The `send` tool is then available in every Claude Code and Codex session on your machine. It's safe to run again, which is also how to repair it if you move this folder. Your own text in the instructions files stays as it is.
+The `send` tool is then available in every Claude Code and Codex session on your machine. It's safe to run again, which is also how to repair it if you move this folder. Your own text in the instructions files stays as it is. `codex mcp add` rewrites `~/.codex/config.toml` when it adds a server, so other entries can change order or formatting, such as `120` becoming `120.0`, and an empty `args = []` can disappear.
 
 To undo everything except your settings file:
 
