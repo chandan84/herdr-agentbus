@@ -9,7 +9,17 @@ import { join } from 'node:path';
 const dir = process.env.FAKE_HC_DIR;
 const args = process.argv.slice(2);
 const pathFor = (agent) => join(dir, `${agent}.json`);
-const load = (agent) => JSON.parse(readFileSync(pathFor(agent), 'utf8'));
+function load(agent) {
+  // The tests rewrite this file in place, so a read can catch it half-written.
+  for (let i = 0; ; i += 1) {
+    try {
+      return JSON.parse(readFileSync(pathFor(agent), 'utf8'));
+    } catch (err) {
+      if (i >= 20) throw err;
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 5);
+    }
+  }
+}
 const save = (agent, state) => writeFileSync(pathFor(agent), JSON.stringify(state));
 const KIND = { claude: 'claude-code', codex: 'codex' };
 const addressOf = (agent) => `t-${agent}`;
