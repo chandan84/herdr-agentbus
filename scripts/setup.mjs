@@ -1,30 +1,22 @@
 #!/usr/bin/env node
-// Writes MCP registrations for Claude Code and Codex with this checkout's absolute
-// path. Both files are project-scoped. Existing files are left alone.
+// Registers agentbus for this folder only: writes MCP registrations for Claude Code and
+// Codex with this checkout's absolute path, plus the user's config file. Existing files
+// are left alone. To use agentbus from any folder, run setup-global.mjs instead.
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { CONFIG_PATH, DEFAULTS } from '../src/config.mjs';
+import { projectFiles } from './project-files.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
-const server = join(root, 'src', 'mcp.mjs').replaceAll('\\', '/');
 
 const files = {
-  '.mcp.json': `${JSON.stringify({
-    mcpServers: {
-      agentbus: { command: 'node', args: [server], env: { AGENTBUS_AGENT: 'claude' } },
-    },
-  }, null, 2)}\n`,
-  '.codex/config.toml': [
-    '[mcp_servers.agentbus]',
-    'command = "node"',
-    `args = ["${server}"]`,
-    'env = { AGENTBUS_AGENT = "codex" }',
-    '',
-  ].join('\n'),
+  [CONFIG_PATH]: `${JSON.stringify(DEFAULTS, null, 2)}\n`,
+  ...projectFiles(root),
 };
 
 for (const [name, content] of Object.entries(files)) {
-  const path = join(root, name);
+  const path = resolve(root, name);
   if (existsSync(path)) {
     console.log(`Left alone (already exists): ${name}`);
     continue;

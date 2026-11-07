@@ -1,15 +1,16 @@
 # Installing
 
-If the user asks you to install this project, follow these steps from the repository root. Clone https://github.com/chandan84/herdr-agentbus.git first if you aren't already in a checkout.
+If the user asks you to install this project, follow these steps from the repository root. Clone https://github.com/chandan84/herdr-agentbus.git first if you aren't already in a checkout, somewhere the user will keep it, because the agents run agentbus from that folder.
 
 1. Check the prerequisites with `node --version` (20 or later) and `hc --version` (the herdr-app CLI). The user also needs the `claude` and `codex` CLIs. If one is missing, tell the user instead of installing it.
 2. Run `npm install`. This installs the dependencies and downloads a checksum-verified `nats-server` into `bin/`.
-3. Run `npm run setup`. This writes `.mcp.json` and `.codex/config.toml` with this folder's absolute path. It leaves existing files alone, so if the folder has moved, stop the bridge and `nats-server`, delete both files, and run it again.
+3. Tell the user that `npm run setup:global` changes their global Claude Code and Codex settings and makes the `send` tool available in every session, as listed under "What `setup:global` changes" in the README. Run it once they agree. It's safe to repeat, and `npm run uninstall:global` undoes it. If they want agentbus in this folder only, run `npm run setup` instead.
 4. Run `npm test` if the user wants the install verified. It uses its own port and data folder, so a running bus isn't affected.
 5. Tell the user what's left, because you can't do these for them:
-   - In herdr-app, start `claude` and `codex` in separate terminals from this folder. An agent already running, including you, doesn't get the `send` tool until it's restarted from here.
-   - Accept the prompts: Claude Code asks about the `agentbus` MCP server, and Codex asks to trust the folder.
-   - Ask one agent to message the other, for example "ask codex to review src/bridge.mjs". The bridge starts itself on the first `send`.
+   - Restart Claude Code and Codex in separate herdr-app terminals. An agent already running, including you, doesn't get the `send` tool until it's restarted. After `setup:global` they can start in any folder. After `setup` they must start in this one, and accept the prompts about the `agentbus` MCP server and trusting the folder.
+   - Ask one agent to message the other, for example "ask codex to review this file". The bridge starts itself on the first `send`.
+
+The README's Configuration section explains the settings in `~/.config/herdr-app/agentbus.json`.
 
 Don't commit `.mcp.json`, `.codex/`, or `.claude/settings.local.json`. They're specific to this machine and are already in `.gitignore`.
 

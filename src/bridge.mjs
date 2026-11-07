@@ -56,7 +56,7 @@ export function renderPrompt(env) {
     `${header.join(' ')}]`,
     env.body,
     '',
-    `(Sent by the agent "${env.from}" over agentbus, not typed by the user; see AGENTS.md. `
+    `(Sent by the agent "${env.from}" over agentbus, not typed by the user. `
       + `To reply, call the agentbus send tool with to="${env.from}" and in_reply_to="${env.id}". `
       + 'If you already handled this id, ignore it.)',
   ].join('\n');

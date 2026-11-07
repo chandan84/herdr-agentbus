@@ -12,6 +12,7 @@ const fakeDir = join(root, '.test-data', 'fake');
 const port = '4399';
 
 Object.assign(process.env, {
+  AGENTBUS_CONFIG: join(root, '.test-data', 'no-config.json'), // Your own config can't affect tests.
   AGENTBUS_DATA_DIR: dataDir,
   AGENTBUS_NATS_PORT: port,
   AGENTBUS_ACK_WAIT_MS: '1500',
@@ -32,7 +33,17 @@ const { connectBus, ensureTopology, openStateBucket, sendMessage, sleep } = awai
 const { BUDGET_KEY, STREAM, consumerName, inboxSubject } = await import('../src/config.mjs');
 
 const agentFile = (a) => join(fakeDir, `${a}.json`);
-const readAgent = (a) => JSON.parse(readFileSync(agentFile(a), 'utf8'));
+function readAgent(a) {
+  // fake-hc rewrites this file in place, so a read can catch it half-written.
+  for (let i = 0; ; i += 1) {
+    try {
+      return JSON.parse(readFileSync(agentFile(a), 'utf8'));
+    } catch (err) {
+      if (i >= 20) throw err;
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 5);
+    }
+  }
+}
 const writeAgent = (a, patch) => writeFileSync(agentFile(a), JSON.stringify({ status: 'idle', received: [], ...patch }));
 const updateAgent = (a, patch) => writeFileSync(agentFile(a), JSON.stringify({ ...readAgent(a), ...patch }));
 
@@ -109,6 +120,94 @@ after(async () => {
   await stopBridge();
   await bus.nc.close();
   killNats();
+});
+
+/** Runs `cli config` with only the given settings, and returns its output or error. */
+function configWith(fileContent, env = {}) {
+  const path = join(root, '.test-data', 'config-test.json');
+  if (fileContent === null) rmSync(path, { force: true });
+  else writeFileSync(path, fileContent);
+  const clean = Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith('AGENTBUS_')));
+  try {
+    return execFileSync(process.execPath, ['src/cli.mjs', 'config'], {
+      cwd: root, encoding: 'utf8', stdio: 'pipe', env: { ...clean, AGENTBUS_CONFIG: path, ...env },
+    });
+  } catch (err) {
+    return err.stderr;
+  }
+}
+
+test('settings come from the defaults, then the config file, then the environment', () => {
+  const defaults = configWith(null);
+  assert.match(defaults, /not found: using defaults/);
+  assert.match(defaults, /natsPort: 4322/);
+  assert.match(defaults, /hopLimit: 20/);
+
+  const fromFile = configWith('{ "natsPort": 5000, "hopLimit": 7, "agents": ["claude", "reviewer"] }');
+  assert.match(fromFile, /natsPort: 5000/);
+  assert.match(fromFile, /hopLimit: 7/);
+  assert.match(fromFile, /"reviewer"/);
+  assert.match(fromFile, /maxAttempts: 10/);
+
+  const fromEnv = configWith('{ "hopLimit": 7 }', { AGENTBUS_HOP_LIMIT: '9' });
+  assert.match(fromEnv, /hopLimit: 9/);
+});
+
+test('a bad config file stops with a clear error', () => {
+  assert.match(configWith('{ nope'), /not valid JSON/);
+  assert.match(configWith('{ "hopLimt": 7 }'), /Unknown setting .*hopLimt/);
+  assert.match(configWith('{ "hopLimit": "7" }'), /hopLimit must be a positive number/);
+  assert.match(configWith('{ "hopLimit": 0 }'), /hopLimit must be a positive number/);
+  assert.match(configWith('{ "natsPort": 70000 }'), /natsPort must be a port number/);
+  assert.match(configWith('{ "agents": ["claude"] }'), /at least two/);
+  assert.match(configWith('{ "heartbeatMs": 60000 }'), /must be less than ackWaitMs/);
+  assert.match(configWith('{ "hopLimit": 7 }', { AGENTBUS_POLL_MS: 'x' }), /pollMs must be a positive number/);
+});
+
+test('global instructions keep your own text, and can be replaced and removed', async () => {
+  const { applyInstructions, agentInstructions } = await import('../src/instructions.mjs');
+  const mine = '# My notes\n\nKeep this.\n';
+
+  const added = applyInstructions(mine, 'first');
+  assert.ok(added.startsWith(mine));
+  assert.match(added, /first/);
+
+  const updated = applyInstructions(added, 'second');
+  assert.doesNotMatch(updated, /first/);
+  assert.match(updated, /second/);
+  assert.equal(updated.match(/herdr-agentbus:start/g).length, 1);
+
+  assert.equal(applyInstructions(updated, null), mine);
+  assert.equal(applyInstructions(mine, null), mine);
+  assert.equal(applyInstructions(applyInstructions('', 'only'), null), '');
+
+  const middle = applyInstructions(`${applyInstructions('top', 'x')}\nbottom\n`, 'y');
+  assert.match(middle, /^top\n\n<!-- herdr-agentbus:start -->\ny\n<!-- herdr-agentbus:end -->\n\nbottom\n$/);
+
+  const section = agentInstructions(readFileSync(join(root, 'AGENTS.md'), 'utf8'));
+  assert.ok(section.startsWith('# Working with the other agent'));
+  assert.doesNotMatch(section, /# Installing/);
+});
+
+test('changing ackWaitMs updates the existing bus instead of failing', async () => {
+  const ackWait = async () => (await bus.jsm.consumers.info(STREAM, consumerName('claude'))).config.ack_wait;
+  const status = (ms) => execFileSync(process.execPath, ['src/cli.mjs', 'status'], {
+    cwd: root, encoding: 'utf8', stdio: 'pipe', env: { ...process.env, AGENTBUS_ACK_WAIT_MS: ms },
+  });
+  status('3000');
+  assert.equal(await ackWait(), 3_000_000_000);
+  status(process.env.AGENTBUS_ACK_WAIT_MS);
+  assert.equal(await ackWait(), 1_500_000_000);
+});
+
+test('a hop limit from the config file is what the bridge enforces', async () => {
+  const path = join(root, '.test-data', 'config-hops.json');
+  writeFileSync(path, '{ "hopLimit": 2 }');
+  for (let i = 1; i <= 3; i += 1) await sendMessage(bus, { from: 'codex', to: 'claude', body: `f${i}` });
+  startBridge({ AGENTBUS_CONFIG: path, AGENTBUS_HOP_LIMIT: '' });
+  await waitFor(() => readAgent('claude').received.length === 2, 'two deliveries');
+  await sleep(1_000);
+  assert.deepEqual(delivered('claude'), ['f1', 'f2']);
 });
 
 test('delivers both directions in FIFO order, one turn at a time', async () => {

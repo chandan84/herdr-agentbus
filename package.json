@@ -9,6 +9,8 @@
   "scripts": {
     "postinstall": "node scripts/install-nats.mjs",
     "setup": "node scripts/setup.mjs",
+    "setup:global": "node scripts/setup-global.mjs",
+    "uninstall:global": "node scripts/setup-global.mjs --remove",
     "bridge": "node src/cli.mjs bridge",
     "status": "node src/cli.mjs status",
     "test": "node --test --test-concurrency=1 test/bridge.test.mjs"

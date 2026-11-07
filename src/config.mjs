@@ -1,43 +1,109 @@
+import { existsSync, readFileSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const num = (name, fallback) => {
-  const raw = process.env[name];
-  if (raw === undefined || raw === '') return fallback;
-  const value = Number(raw);
-  if (!Number.isFinite(value)) throw new Error(`${name} must be a number, got "${raw}"`);
-  return value;
-};
-
 export const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+export const CONFIG_PATH = process.env.AGENTBUS_CONFIG ?? join(homedir(), '.config', 'herdr-app', 'agentbus.json');
 const dataDir = process.env.AGENTBUS_DATA_DIR ?? join(ROOT, '.data');
 
-export const config = {
-  agents: (process.env.AGENTBUS_AGENTS ?? 'claude,codex').split(',').map((s) => s.trim()).filter(Boolean),
-  dataDir,
-  natsPort: num('AGENTBUS_NATS_PORT', 4322),
-  natsBinary: join(ROOT, 'bin', process.platform === 'win32' ? 'nats-server.exe' : 'nats-server'),
+// Each setting can be set in the config file, or by an environment variable named after
+// it, such as AGENTBUS_HOP_LIMIT for hopLimit. The variable wins.
+export const DEFAULTS = {
+  natsPort: 4322,
+  agents: ['claude', 'codex'],
+
+  // Runaway guard: pause after this many deliveries with no quiet gap.
+  hopLimit: 20,
+  quietResetMs: 600_000,
+
+  // Delivery retries: base * 2^(attempt-1), capped, with +/-20% jitter.
+  maxAttempts: 10,
+  backoffBaseMs: 1_000,
+  backoffCapMs: 300_000,
 
   // In-flight messages must be heartbeated faster than ackWait, or JetStream
   // redelivers them. That redelivery is what recovers from a bridge crash.
-  ackWaitMs: num('AGENTBUS_ACK_WAIT_MS', 30_000),
-  heartbeatMs: num('AGENTBUS_HEARTBEAT_MS', 10_000),
-  pollMs: num('AGENTBUS_POLL_MS', 1_000),
-  fetchExpiresMs: num('AGENTBUS_FETCH_EXPIRES_MS', 3_000),
-  promptTimeoutMs: num('AGENTBUS_PROMPT_TIMEOUT_MS', 20_000),
-  startGraceMs: num('AGENTBUS_START_GRACE_MS', 5_000),
+  ackWaitMs: 30_000,
+  heartbeatMs: 10_000,
 
-  // Delivery retries: base * 2^(attempt-1), capped, with +/-20% jitter.
-  backoffBaseMs: num('AGENTBUS_BACKOFF_BASE_MS', 1_000),
-  backoffCapMs: num('AGENTBUS_BACKOFF_CAP_MS', 300_000),
-  maxAttempts: num('AGENTBUS_MAX_ATTEMPTS', 10),
-
-  // Runaway guard: pause after this many deliveries with no quiet gap.
-  hopLimit: num('AGENTBUS_HOP_LIMIT', 20),
-  quietResetMs: num('AGENTBUS_QUIET_RESET_MS', 600_000),
+  pollMs: 1_000,
+  fetchExpiresMs: 3_000,
+  promptTimeoutMs: 20_000,
+  startGraceMs: 5_000,
 
   maxBodyChars: 16_000,
   retentionDays: 30,
+};
+
+const envName = (key) => `AGENTBUS_${key.replace(/[A-Z]/g, '_$&').toUpperCase()}`;
+
+export function assertAgentName(agent) {
+  if (!/^[a-z][a-z0-9_-]{0,31}$/.test(agent)) throw new Error(`Invalid agent name: ${agent}`);
+  return agent;
+}
+
+function readConfigFile() {
+  if (!existsSync(CONFIG_PATH)) return {};
+  let file;
+  try {
+    file = JSON.parse(readFileSync(CONFIG_PATH, 'utf8'));
+  } catch (err) {
+    throw new Error(`${CONFIG_PATH} is not valid JSON: ${err.message}`);
+  }
+  if (file === null || typeof file !== 'object' || Array.isArray(file)) {
+    throw new Error(`${CONFIG_PATH} must hold a JSON object of settings`);
+  }
+  // A misspelled setting would otherwise be ignored without any sign.
+  const unknown = Object.keys(file).filter((key) => !(key in DEFAULTS));
+  if (unknown.length > 0) {
+    throw new Error(`Unknown setting in ${CONFIG_PATH}: ${unknown.join(', ')}. Valid settings: ${Object.keys(DEFAULTS).join(', ')}`);
+  }
+  return file;
+}
+
+function checkNumber(key, value, source) {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
+    throw new Error(`${key} must be a positive number, got ${JSON.stringify(value)} from ${source}`);
+  }
+  return value;
+}
+
+function checkAgents(value, source) {
+  if (!Array.isArray(value) || value.length < 2) {
+    throw new Error(`agents must list at least two names, got ${JSON.stringify(value)} from ${source}`);
+  }
+  return value.map(assertAgentName);
+}
+
+function resolveSettings() {
+  const file = readConfigFile();
+  const settings = {};
+  for (const [key, fallback] of Object.entries(DEFAULTS)) {
+    const name = envName(key);
+    const raw = process.env[name];
+    const fromEnv = raw !== undefined && raw !== '';
+    const source = fromEnv ? name : (key in file ? CONFIG_PATH : 'defaults');
+    if (key === 'agents') {
+      const value = fromEnv ? raw.split(',').map((s) => s.trim()).filter(Boolean) : (file.agents ?? fallback);
+      settings.agents = checkAgents(value, source);
+    } else {
+      settings[key] = checkNumber(key, fromEnv ? Number(raw) : (file[key] ?? fallback), source);
+    }
+  }
+  if (!Number.isInteger(settings.natsPort) || settings.natsPort > 65_535) {
+    throw new Error(`natsPort must be a port number, got ${settings.natsPort}`);
+  }
+  if (settings.heartbeatMs >= settings.ackWaitMs) {
+    throw new Error(`heartbeatMs (${settings.heartbeatMs}) must be less than ackWaitMs (${settings.ackWaitMs}), or messages in flight get redelivered`);
+  }
+  return settings;
+}
+
+export const config = {
+  ...resolveSettings(),
+  dataDir,
+  natsBinary: join(ROOT, 'bin', process.platform === 'win32' ? 'nats-server.exe' : 'nats-server'),
 };
 
 export const STREAM = 'AGENTBUS';
@@ -46,8 +112,3 @@ export const BUDGET_KEY = 'budget';
 export const inboxSubject = (agent) => `agentbus.inbox.${agent}`;
 export const dlqSubject = (agent) => `agentbus.dlq.${agent}`;
 export const consumerName = (agent) => `deliver-${agent}`;
-
-export function assertAgentName(agent) {
-  if (!/^[a-z][a-z0-9_-]{0,31}$/.test(agent)) throw new Error(`Invalid agent name: ${agent}`);
-  return agent;
-}

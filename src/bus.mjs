@@ -107,15 +107,24 @@ export async function ensureTopology({ jsm }) {
     // max_ack_pending=1 gives strict FIFO: the next message waits until this
     // one is acked. max_deliver is unlimited because the bridge moves exhausted
     // messages to the DLQ itself; the server would otherwise just stop trying.
-    await jsm.consumers.add(STREAM, {
-      durable_name: consumerName(agent),
-      filter_subject: inboxSubject(agent),
-      ack_policy: AckPolicy.Explicit,
-      deliver_policy: DeliverPolicy.All,
-      ack_wait: nanos(config.ackWaitMs),
-      max_ack_pending: 1,
-      max_deliver: -1,
-    });
+    const name = consumerName(agent);
+    const ackWait = nanos(config.ackWaitMs);
+    try {
+      // The server rejects adding a consumer that exists with a different ackWait.
+      const { config: current } = await jsm.consumers.info(STREAM, name);
+      if (current.ack_wait !== ackWait) await jsm.consumers.update(STREAM, name, { ack_wait: ackWait });
+    } catch (err) {
+      if (!isNotFound(err)) throw err;
+      await jsm.consumers.add(STREAM, {
+        durable_name: name,
+        filter_subject: inboxSubject(agent),
+        ack_policy: AckPolicy.Explicit,
+        deliver_policy: DeliverPolicy.All,
+        ack_wait: ackWait,
+        max_ack_pending: 1,
+        max_deliver: -1,
+      });
+    }
   }
 }
 

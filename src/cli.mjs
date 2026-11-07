@@ -1,15 +1,15 @@
 #!/usr/bin/env node
-// Operator commands: status, send, resume, dlq list, dlq retry, stop.
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
+// Operator commands: status, config, send, resume, dlq list, dlq retry, stop.
+import { existsSync } from 'node:fs';
 import { AckPolicy, DeliverPolicy } from '@nats-io/jetstream';
-import { BUDGET_KEY, STREAM, config, consumerName, dlqSubject } from './config.mjs';
+import { BUDGET_KEY, CONFIG_PATH, DEFAULTS, STREAM, config, consumerName, dlqSubject } from './config.mjs';
 import { connectBus, ensureTopology, openStateBucket, sendMessage } from './bus.mjs';
 import { findAgent, startBridge } from './terminal.mjs';
 
 const USAGE = `Usage: node src/cli.mjs <command>
   bridge                         Start the bridge in its own hc terminal
   status                         Queue depth, agent state, and pause state
+  config                         Config file path and the settings in effect
   send <from> <to> <body...>     Queue a message
   resume                         Clear the hop-limit pause
   dlq list                       Show dead-lettered messages
@@ -61,6 +61,12 @@ async function main() {
   if (command === 'bridge') {
     const res = await startBridge();
     console.log(res.ok ? `Bridge started: ${res.stdout.trim()}` : `Not started: ${res.message}`);
+    return;
+  }
+
+  if (command === 'config') {
+    console.log(`${CONFIG_PATH}${existsSync(CONFIG_PATH) ? '' : ' (not found: using defaults)'}`);
+    for (const key of Object.keys(DEFAULTS)) console.log(`  ${key}: ${JSON.stringify(config[key])}`);
     return;
   }
 
