@@ -147,3 +147,12 @@ vite.config.ts.timestamp-*
 
 # Turbo Repo
 .turbo
+
+# herdr-agentbus
+bin/
+.data/
+.test-data/
+# Written by `npm run setup`, with this machine's absolute paths.
+.mcp.json
+.codex/
+.claude/settings.local.json

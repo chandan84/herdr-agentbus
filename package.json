@@ -1,0 +1,23 @@
+{
+  "name": "herdr-agentbus",
+  "version": "0.1.0",
+  "description": "Durable FIFO messaging between coding agents in herdr-app terminals, backed by NATS JetStream.",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=20" },
+  "bin": { "agentbus": "src/cli.mjs" },
+  "scripts": {
+    "postinstall": "node scripts/install-nats.mjs",
+    "setup": "node scripts/setup.mjs",
+    "bridge": "node src/cli.mjs bridge",
+    "status": "node src/cli.mjs status",
+    "test": "node --test --test-concurrency=1 test/bridge.test.mjs"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.32.2",
+    "@nats-io/jetstream": "3.4.0",
+    "@nats-io/kv": "3.4.0",
+    "@nats-io/transport-node": "3.4.0",
+    "zod": "4.6.7"
+  }
+}
